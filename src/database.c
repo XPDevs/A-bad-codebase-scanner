@@ -1,0 +1,25 @@
+/* Code-Scan Static Analyzer - Copyright (C) 2026 XPDevs. All rights reserved. */
+#include "code_scan.h"
+#include "database.h"
+IssueDB*db_init(int file_count){IssueDB*db=calloc(1,sizeof(IssueDB));if(!db)return NULL;db->nfiles=file_count;db->heads=calloc((size_t)(file_count>0?file_count:1),sizeof(DBEntry*));db->all=NULL;db->nall=0;db->last_id=0;return db;}
+int db_add(IssueDB*db,Issue*issue,int file_id){if(!db||!issue)return-1;DBEntry*e=calloc(1,sizeof(DBEntry));if(!e)return-1;memcpy(&e->issue,issue,sizeof(Issue));e->issue.id=++db->last_id;e->file_id=file_id;e->suppressed=0;e->tag[0]=0;e->next=db->all;db->all=e;db->nall++;if(file_id>=0&&file_id<db->nfiles&&db->heads){e->next=db->heads[file_id];db->heads[file_id]=e;}return e->issue.id;}
+int db_suppress(IssueDB*db,int issue_id){DBEntry*e=db->all;while(e){if(e->issue.id==issue_id){e->suppressed=1;db->suppressed_count++;return 1;}e=e->next;}return 0;}
+int db_suppress_file(IssueDB*db,const char*file){int count=0;DBEntry*e=db->all;while(e){if(strcmp(e->issue.loc.file,file)==0&&!e->suppressed){e->suppressed=1;db->suppressed_count++;count++;}e=e->next;}return count;}
+int db_suppress_code(IssueDB*db,int code){int count=0;DBEntry*e=db->all;while(e){if(e->issue.code==code&&!e->suppressed){e->suppressed=1;db->suppressed_count++;count++;}e=e->next;}return count;}
+static int cmp_severity(const void*a,const void*b){const DBEntry*ea=*(const DBEntry**)a;const DBEntry*eb=*(const DBEntry**)b;return eb->issue.sev-ea->issue.sev;}
+static int cmp_file(const void*a,const void*b){const DBEntry*ea=*(const DBEntry**)a;const DBEntry*eb=*(const DBEntry**)b;int r=strcmp(ea->issue.loc.file,eb->issue.loc.file);if(r==0)return ea->issue.loc.line-eb->issue.loc.line;return r;}
+static int cmp_code(const void*a,const void*b){const DBEntry*ea=*(const DBEntry**)a;const DBEntry*eb=*(const DBEntry**)b;return ea->issue.code-eb->issue.code;}
+void db_sort_by_severity(IssueDB*db){if(!db||!db->all)return;Issue**all=db_get_all(db,&db->nall);qsort(all,(size_t)db->nall,sizeof(Issue*),cmp_severity);}
+void db_sort_by_file(IssueDB*db){if(!db||!db->all)return;Issue**all=db_get_all(db,&db->nall);qsort(all,(size_t)db->nall,sizeof(Issue*),cmp_file);}
+void db_sort_by_code(IssueDB*db){if(!db||!db->all)return;Issue**all=db_get_all(db,&db->nall);qsort(all,(size_t)db->nall,sizeof(Issue*),cmp_code);}
+int db_count_by_severity(IssueDB*db,Severity s){int c=0;DBEntry*e=db->all;while(e){if(!e->suppressed&&e->issue.sev==s)c++;e=e->next;}return c;}
+int db_count_by_category(IssueDB*db,Category c){int cnt=0;DBEntry*e=db->all;while(e){if(!e->suppressed&&e->issue.cat==c)cnt++;e=e->next;}return cnt;}
+int db_count_by_file(IssueDB*db,int file_id){int c=0;DBEntry*e=db->all;while(e){if(!e->suppressed&&e->file_id==file_id)c++;e=e->next;}return c;}
+Issue*db_get(IssueDB*db,int id){DBEntry*e=db->all;while(e){if(e->issue.id==id&&!e->suppressed)return&e->issue;e=e->next;}return NULL;}
+Issue**db_get_all(IssueDB*db,int*n){if(!db||!n)return NULL;int count=0;DBEntry*e=db->all;while(e){if(!e->suppressed)count++;e=e->next;}Issue**arr=malloc((size_t)(count+1)*sizeof(Issue*));if(!arr){*n=0;return NULL;}int i=0;e=db->all;while(e){if(!e->suppressed)arr[i++]=&e->issue;e=e->next;}arr[i]=NULL;*n=i;return arr;}
+Issue**db_get_by_file(IssueDB*db,int file_id,int*n){if(!db||!n){*n=0;return NULL;}int count=0;DBEntry*e=db->all;while(e){if(!e->suppressed&&e->file_id==file_id)count++;e=e->next;}Issue**arr=malloc((size_t)(count+1)*sizeof(Issue*));if(!arr){*n=0;return NULL;}int i=0;e=db->all;while(e){if(!e->suppressed&&e->file_id==file_id)arr[i++]=&e->issue;e=e->next;}arr[i]=NULL;*n=i;return arr;}
+Issue**db_get_by_severity(IssueDB*db,Severity s,int*n){if(!db||!n){*n=0;return NULL;}int count=0;DBEntry*e=db->all;while(e){if(!e->suppressed&&e->issue.sev==s)count++;e=e->next;}Issue**arr=malloc((size_t)(count+1)*sizeof(Issue*));if(!arr){*n=0;return NULL;}int i=0;e=db->all;while(e){if(!e->suppressed&&e->issue.sev==s)arr[i++]=&e->issue;e=e->next;}arr[i]=NULL;*n=i;return arr;}
+Issue**db_get_by_category(IssueDB*db,Category c,int*n){if(!db||!n){*n=0;return NULL;}int count=0;DBEntry*e=db->all;while(e){if(!e->suppressed&&e->issue.cat==c)count++;e=e->next;}Issue**arr=malloc((size_t)(count+1)*sizeof(Issue*));if(!arr){*n=0;return NULL;}int i=0;e=db->all;while(e){if(!e->suppressed&&e->issue.cat==c)arr[i++]=&e->issue;e=e->next;}arr[i]=NULL;*n=i;return arr;}
+void db_dedup(IssueDB*db){if(!db||!db->all)return;int*remove_ids=NULL;int nremove=0;int cap=0;DBEntry*e=db->all;while(e){DBEntry*inner=e->next;while(inner){if(e->issue.code==inner->issue.code&&e->issue.loc.line==inner->issue.loc.line&&strcmp(e->issue.msg,inner->issue.msg)==0){if(cap<=nremove){cap=cap?cap*2:64;remove_ids=realloc(remove_ids,cap*sizeof(int));}remove_ids[nremove++]=inner->issue.id;}inner=inner->next;}e=e->next;}for(int i=0;i<nremove;i++)db_suppress(db,remove_ids[i]);free(remove_ids);}
+void db_merge(IssueDB*dst,IssueDB*src){if(!dst||!src)return;DBEntry*e=src->all;while(e){db_add(dst,&e->issue,e->file_id);e=e->next;}}
+void db_free(IssueDB*db){if(!db)return;free(db->heads);DBEntry*e=db->all;while(e){DBEntry*next=e->next;free(e);e=next;}free(db);}
